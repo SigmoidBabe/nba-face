@@ -180,6 +180,37 @@ Existing registered embeddings must come from the same ArcFace model and
 compatible preprocessing. Otherwise re-enroll the gallery. Thresholds must be
 calibrated against your deployed engines and enrollment images.
 
+## Build an ArcFace TensorRT engine with batching
+
+Export ArcFace to ONNX with a dynamic batch dimension: input `[B,3,112,112]`
+and output `[B,512]`. A fixed-batch ONNX model must be re-exported with dynamic
+batch support; `trtexec` shape flags alone do not make it dynamic.
+
+For TensorRT 8.6–10.x, build an engine with batch sizes 1–32, optimized for 8:
+
+```bash
+trtexec \
+  --onnx=/opt/models/arcface.onnx \
+  --saveEngine=/opt/models/arcface.engine \
+  --minShapes=input:1x3x112x112 \
+  --optShapes=input:8x3x112x112 \
+  --maxShapes=input:32x3x112x112 \
+  --skipInference
+```
+
+Replace `input` in all three shape arguments with the ONNX model's actual input
+tensor name. Optionally add `--fp16` to enable FP16 computation. Build on the
+deployment GPU with the TensorRT version used by the runtime, and set
+`config.arcface_engine` to the saved engine path. `--skipInference` builds and
+saves the engine without running inference or benchmarks. See NVIDIA's
+[`trtexec` documentation](https://docs.nvidia.com/tao/tao-toolkit/6.25.07/text/trtexec_integration/index.html)
+for the shape and build flags.
+
+The runtime uses profile 0 and splits face crops into batches of at most 32 for
+this engine. Increase `--maxShapes` for a larger supported face batch.
+`config.batch_size` controls detector frame batches; ArcFace batches the face
+crops from those frames according to its own engine profile.
+
 ## Batch APIs and sessions
 
 `FaceRuntime.infer_batch(images)` accepts an ordered list of CUDA HWC images and
