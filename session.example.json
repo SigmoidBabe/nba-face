@@ -1,0 +1,16 @@
+{
+  "session_id": "nba-face-camera-1",
+  "status": true,
+  "source": {
+    "camera": {
+      "camera_id": "camera-1",
+      "stream_address": "rtsp://localhost:8554/example"
+    }
+  },
+  "runtime": {"id": "nba.face", "capability": "face.recognition"},
+  "inference": {
+    "inference_primitive_usecase": "face recognition",
+    "config": {"fps": 2, "similarity_threshold": 0.6}
+  },
+  "output": {"mode": "periodic", "interval": 2}
+}
