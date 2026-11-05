@@ -45,7 +45,7 @@ class FaceBackend:
         self.layout = config.get("detector_layout", "BCN")
         if self.layout not in ("BCN", "BNC"):
             raise ValueError("detector_layout must be BCN or BNC")
-        self.search = FaceSearch(config.get("db", {}))
+        self.search = FaceSearch(config["db"])
         self.detector = self.arcface = None
 
     def _load(self):

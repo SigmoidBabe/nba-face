@@ -32,8 +32,8 @@ def _bigint(value, name, *, positive=False):
 class FaceRegistrationAPI:
     def __init__(self, config):
         self.config = config
-        self.database = FaceSearch(config.get("db", {}))
-        self.image_directory = Path(config.get("registration_image_dir", "face-registration")).resolve()
+        self.database = FaceSearch(config["db"])
+        self.image_directory = Path(config["registration_image_dir"]).resolve()
         self.backend = None
         self.lock = threading.Lock()
 

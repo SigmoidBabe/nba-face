@@ -6,23 +6,25 @@
   grpc_apis:
     - face.registration
   config:
-    device: 0
+    # Required deployment settings (no defaults).
     detector_engine: /opt/models/face-yolov8.engine
-    detector_size: [640, 640]
-    detector_layout: BCN
-    face_label: face  # Class name from /opt/models/face-yolov8.txt.
     arcface_engine: /opt/models/arcface.engine
-    batch_size: 8
-    score_threshold: 0.7
-    iou_threshold: 0.4
-    similarity_threshold: 0.6
-    minimum_face_size: 0
-    crop_margin: 0.2
-    max_faces: 100
     registration_image_dir: /var/lib/cv-demo/nba-face/images
     db:
       dsn_env: NBA_FACE_DATABASE_URL
-      statement_timeout_ms: 5000
+      # statement_timeout_ms: 5000
+    # Optional overrides; omitted settings use these defaults.
+    # device: 0
+    # detector_size: [640, 640]
+    # detector_layout: BCN
+    # face_label: face  # Class name from /opt/models/face-yolov8.txt.
+    # batch_size: 8
+    # score_threshold: 0.7
+    # iou_threshold: 0.4
+    # similarity_threshold: 0.6
+    # minimum_face_size: 0
+    # crop_margin: 0.2
+    # max_faces: 100
   capabilities:
     - id: face.recognition
       output_modes: [periodic, event]

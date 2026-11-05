@@ -17,8 +17,12 @@ export NBA_FACE_DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/DATABASE'
 CV_DEMO_RUNTIME_REGISTRY=packages/nba-face/registry.yaml python -m app.cv_demo.main
 ```
 
-Set engine paths and GPU device in `registry.yaml` first. The GPU must match the
-host ingestion GPU. Installation does not build or download engines. For an
+Set `config.detector_engine`, `config.arcface_engine`,
+`config.registration_image_dir`, and `config.db` in `registry.yaml`; these settings
+are required and have no defaults. All other config settings are optional and
+use the defaults shown in the registry comments when omitted. The GPU defaults
+to device 0; override `config.device` to match the host ingestion GPU.
+Installation does not build or download engines. For an
 existing registry, add this runtime's YAML list item. Send `session.example.json`
 through the host's `RuntimeControl.StartRuntime` API. This package implements
 recognition sessions and the `face.registration` gRPC API with `register_face`
@@ -76,8 +80,8 @@ Example response (the package object is returned directly):
 }
 ```
 
-Set `config.registration_image_dir` to a writable persistent directory (default:
-`face-registration` relative to the server working directory). A UUID-named JPEG
+Set `config.registration_image_dir` to a writable persistent directory. This
+setting is required and has no default. A UUID-named JPEG
 is saved there, and its absolute `file://` URI is stored in `image_url`. This is
 a host file reference, not an HTTP download URL. A failed database insert
 attempts to remove the newly saved image. No S3 upload is performed.
