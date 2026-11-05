@@ -8,8 +8,9 @@ from psycopg.rows import dict_row
 
 class FaceSearch:
     def __init__(self, config):
-        # A DSN environment variable keeps credentials out of registry YAML.
-        self.dsn = os.environ.get(config.get("dsn_env", "NBA_FACE_DATABASE_URL"))
+        # Prefer a registry URL; retain environment-based configuration support.
+        dsn_env = config.get("dsn_env", "NBA_FACE_DATABASE_URL")
+        self.dsn = config.get("url") or os.environ.get(dsn_env)
         self.options = {
             target: config[source]
             for source, target in (("name", "dbname"), ("username", "user"),
@@ -17,7 +18,12 @@ class FaceSearch:
             if source in config
         }
         if not self.dsn and not self.options:
-            raise ValueError("Configure db fields or NBA_FACE_DATABASE_URL")
+            raise ValueError(
+                "Configure config.db.url with a PostgreSQL connection URL, "
+                "or configure config.db.name, username, password, host, and port. "
+                f"Alternatively, set environment variable {dsn_env!r} "
+                "(named by config.db.dsn_env) to a PostgreSQL DSN."
+            )
         self.timeout = int(config.get("statement_timeout_ms", 5000))
         if self.timeout <= 0:
             raise ValueError("db.statement_timeout_ms must be positive")

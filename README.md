@@ -13,7 +13,6 @@ on first use; the CUDA runtime/compiler libraries must be available:
 
 ```bash
 python -m pip install -e ./packages/nba-face
-export NBA_FACE_DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/DATABASE'
 CV_DEMO_RUNTIME_REGISTRY=packages/nba-face/registry.yaml python -m app.cv_demo.main
 ```
 
@@ -270,8 +269,40 @@ This preserves cosine similarity and soft-deletion behavior from the legacy
 search. It can use the existing HNSW `vector_cosine_ops` index. Newly committed
 registrations are visible on subsequent queries without a gallery reload.
 
-Supply a DSN through `db.dsn_env` (default `NBA_FACE_DATABASE_URL`), or configure
-legacy `db.name`, `username`, `password`, `host`, and `port` fields. Search uses a
+Set the PostgreSQL connection URL directly in `registry.yaml`:
+
+```yaml
+    db:
+      url: 'postgresql://USER:PASSWORD@HOST:5432/DATABASE'
+```
+
+Replace the placeholders with your database connection details.
+`config.db.url` takes precedence over the environment variable. Alternatively,
+omit `url` and use `config.db.dsn_env`, which names an environment variable
+(default `NBA_FACE_DATABASE_URL`) containing the connection URL:
+
+```bash
+export NBA_FACE_DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/DATABASE'
+```
+
+For a container or service, pass the variable into that container or service's
+environment and restart it. An export in a separate shell does not update an
+already-running host. A missing URL and unset or empty variable with no
+configured connection fields causes a startup `ValueError`.
+
+Alternatively, replace `config.db` with explicit connection fields:
+
+```yaml
+    db:
+      name: YOUR_DATABASE
+      username: YOUR_USER
+      password: YOUR_PASSWORD
+      host: YOUR_DATABASE_HOST
+      port: 5432
+```
+
+Explicit fields override the corresponding values in the registry URL or
+environment DSN. Search uses a
 lazy persistent autocommit connection, a 10-second connection timeout and
 `db.statement_timeout_ms` (default 5000). Database failures propagate to the
 host's runtime failure handling, rather than reporting everyone as unknown.

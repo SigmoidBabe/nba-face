@@ -1,5 +1,5 @@
 # Install: python -m pip install -e ./packages/nba-face
-# Set NBA_FACE_DATABASE_URL in the host process environment.
+# Set the PostgreSQL connection URL under config.db.url.
 - runtime_id: nba.face
   package:
     entry_point: nba.face
@@ -11,7 +11,7 @@
     arcface_engine: /opt/models/arcface.engine
     registration_image_dir: /var/lib/cv-demo/nba-face/images
     db:
-      dsn_env: NBA_FACE_DATABASE_URL
+      url: 'postgresql://USER:PASSWORD@HOST:5432/DATABASE'
       # statement_timeout_ms: 5000
     # Optional overrides; omitted settings use these defaults.
     # device: 0
