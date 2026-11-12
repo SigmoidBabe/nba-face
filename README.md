@@ -16,7 +16,7 @@ python -m pip install -e ./packages/nba-face
 CV_DEMO_RUNTIME_REGISTRY=packages/nba-face/registry.yaml python -m app.cv_demo.main
 ```
 
-Set `config.detector_engine`, `config.arcface_engine`,
+Set `config.model.face_detection.engine`, `config.model.face_extraction.engine`,
 `config.registration_image_dir`, and `config.db` in `registry.yaml`; these settings
 are required and have no defaults. All other config settings are optional and
 use the defaults shown in the registry comments when omitted. The GPU defaults
@@ -58,7 +58,10 @@ PostgreSQL `BIGINT` schema. Send large identifiers as strings to avoid protobuf
 Struct number precision loss. The image must contain exactly one face passing
 the configured detector filters. `crop_type` is optional, ignores case and
 surrounding whitespace, and accepts `full`, `tight`, or `loose` (default).
-`full` embeds and saves the full image, `tight` uses the detected box, and
+`full` embeds and saves the full image, `tight
+The API decodes the uploaded image on the CPU, uploads it for the existing
+TensorRT detector and ArcFace models, normalizes a 512D embedding, and inserts
+an identity in the configured PostgreSQL `publ` uses the detected box, and
 `loose` expands the box by 25% on each side, clipped to the image bounds.
 
 The API decodes the uploaded image on the CPU, uploads it for the existing
@@ -75,14 +78,15 @@ Example response (the package object is returned directly):
 {
   "identity_id": 123,
   "employee_id": 42,
-  "image_url": "file:///var/lib/cv-demo/nba-face/images/550e8400-e29b-41d4-a716-446655440000.jpg"
+  "image_url": "/var/lib/cv-demo/nba-face/images/550e8400-e29b-41d4-a716-446655440000.jpg"
 }
 ```
 
 Set `config.registration_image_dir` to a writable persistent directory. This
 setting is required and has no default. A UUID-named JPEG
-is saved there, and its absolute `file://` URI is stored in `image_url`. This is
-a host file reference, not an HTTP download URL. A failed database insert
+is saved there, and its path is stored in `image_url` without a `file://` prefix.
+Relative directories are resolved from the current working directory and remain
+relative in `image_url`. This is a host file reference, not an HTTP download URL. A failed database insert
 attempts to remove the newly saved image. No S3 upload is performed.
 
 Soft-delete an individual registration by its positive PostgreSQL identity ID:
@@ -107,6 +111,82 @@ failures propagate as `INTERNAL` through the host. See the shared
 [Invoke request](../../docs/grpc_documentation/package_api_invoke_request.md) and
 [Invoke response](../../docs/grpc_documentation/package_api_invoke_response.md)
 documentation.
+
+## TOPS calculation API
+
+Enable `face.performance` in `grpc_apis` and reinstall the package so the host
+discovers its entry point. Set both per-model operation counts in `registry.yaml`
+to match your deployed models and input sizes. The supplied zero values must be
+replaced before calling this API. For example (illustrative counts only):
+
+```yaml
+config:
+  model:
+    face_detection:
+      engine: /opt/models/face-yolov8.engine
+      operations_per_inference: 600000000
+    face_extraction:
+      engine: /opt/models/arcface.engine
+      operations_per_inference: 400000000
+```
+
+`model.face_detection` supplies the detector count for one frame;
+`model.face_extraction` supplies the ArcFace count for one face. Use the
+same counting convention for both models, such as two operations per
+multiply-add. The API assumes **one face per frame** and includes both models.
+It performs arithmetic without loading engines or running inference.
+
+Call `cv_demo.api.v1.PackageAPI/Invoke` with:
+
+```json
+{
+  "api": "face.performance",
+  "method": "calculate_tops",
+  "payload": {
+    "cv_capability": "face.recognition",
+    "fps": 30,
+    "batchsize": 8
+  }
+}
+```
+
+`cv_capability` is required and must be `face.recognition`, the runtime's
+supported capability. This includes face detection and face extraction.
+Missing or unsupported capabilities raise `ValueError` (`INVALID_ARGUMENT`).
+
+`fps` means **inference batch executions per second**, and `batchsize` is the
+number of frames in each batch. If your measured FPS already counts individual
+frames, divide it by the batch size before supplying `fps`.
+
+```text
+operations_per_inference = detector_operations_per_inference + arcface_operations_per_inference
+tops = operations_per_inference * fps * batchsize / 1e12
+```
+
+With the illustrative counts above, the response is:
+
+```json
+{
+  "cv_capability": "face.recognition",
+  "fps": 30.0,
+  "batchsize": 8,
+  "faces_per_frame": 1,
+  "detector_operations_per_inference": 600000000.0,
+  "arcface_operations_per_inference": 400000000.0,
+  "operations_per_inference": 1000000000.0,
+  "detector_tops": 0.144,
+  "arcface_tops": 0.096,
+  "tops": 0.24
+}
+```
+
+This is estimated model workload throughput. Preprocessing, NMS, database search,
+and engine batch padding are excluded. The request accepts finite positive JSON
+numbers; `batchsize` must also be an integer at most `2**53 - 1`. Both configured
+operation counts must be finite positive numbers and have no defaults. Missing
+or invalid values, or overflowing results, raise `ValueError`
+(`INVALID_ARGUMENT`). Unsupported methods raise `NotImplementedError`
+(`UNIMPLEMENTED`).
 
 ## GPU pipeline and engine contracts
 
@@ -189,10 +269,10 @@ For TensorRT 8.6–10.x, build an engine with batch sizes 1–32, optimized for 
 
 ```bash
 trtexec \
-  --onnx=/opt/models/arcface.onnx \
-  --saveEngine=/opt/models/arcface.engine \
-  --minShapes=input:1x3x112x112 \
-  --optShapes=input:8x3x112x112 \
+  --onnx=models/face_extraction/w600k_r50.onnx \
+  --saveEngine=models/face_extraction/face_extraction.trt \
+  --minShapes=input.1:1x3x112x112 \
+  --optShapes=input.1:8x3x112x112 \
   --maxShapes=input:32x3x112x112 \
   --skipInference
 ```
@@ -200,7 +280,7 @@ trtexec \
 Replace `input` in all three shape arguments with the ONNX model's actual input
 tensor name. Optionally add `--fp16` to enable FP16 computation. Build on the
 deployment GPU with the TensorRT version used by the runtime, and set
-`config.arcface_engine` to the saved engine path. `--skipInference` builds and
+`config.model.face_extraction.engine` to the saved engine path. `--skipInference` builds and
 saves the engine without running inference or benchmarks. See NVIDIA's
 [`trtexec` documentation](https://docs.nvidia.com/tao/tao-toolkit/6.25.07/text/trtexec_integration/index.html)
 for the shape and build flags.

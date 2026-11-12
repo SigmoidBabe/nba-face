@@ -33,7 +33,7 @@ class FaceRegistrationAPI:
     def __init__(self, config):
         self.config = config
         self.database = FaceSearch(config["db"])
-        self.image_directory = Path(config["registration_image_dir"]).resolve()
+        self.image_directory = Path(config["registration_image_dir"])
         self.backend = None
         self.lock = threading.Lock()
 
@@ -78,7 +78,7 @@ class FaceRegistrationAPI:
                 with path.open("xb") as output:
                     created = True
                     output.write(jpeg.tobytes())
-                return self.database.register(employee_id, embedding, path.as_uri())
+                return self.database.register(employee_id, embedding, str(path))
             except Exception:
                 if created:
                     path.unlink(missing_ok=True)

@@ -5,14 +5,23 @@
     entry_point: nba.face
   grpc_apis:
     - face.registration
+    - face.performance
   config:
     # Required deployment settings (no defaults).
-    detector_engine: /opt/models/face-yolov8.engine
-    arcface_engine: /opt/models/arcface.engine
+    model:
+      face_detection:
+        engine: /opt/models/face-yolov8.engine
+        operations_per_inference: 0
+      face_extraction:
+        engine: /opt/models/arcface.engine
+        operations_per_inference: 0
     registration_image_dir: /var/lib/cv-demo/nba-face/images
     db:
       url: 'postgresql://USER:PASSWORD@HOST:5432/DATABASE'
       # statement_timeout_ms: 5000
+    # Required for calculate_tops: set actual operations per single model item.
+    # Detection processes one frame; ArcFace extracts one face per frame.
+    # No operation counts are inferred from the engine filenames.
     # Optional overrides; omitted settings use these defaults.
     # device: 0
     # detector_size: [640, 640]

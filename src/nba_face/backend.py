@@ -12,7 +12,7 @@ from .trt import TensorRTEngine
 class FaceBackend:
     def __init__(self, config):
         self.device = int(config.get("device", 0))
-        self.detector_path = config["detector_engine"]
+        self.detector_path = config["model"]["face_detection"]["engine"]
         # Match person-inference: class IDs follow line order in model.txt
         # beside model.engine/model.trt. Ignore trailing empty lines only.
         labels_path = Path(self.detector_path).with_suffix(".txt")
@@ -27,7 +27,7 @@ class FaceBackend:
         if not isinstance(self.face_label, str) or self.face_label not in self.classes:
             raise ValueError(f"Face label {self.face_label!r} not found in {labels_path}")
         self.face_class_id = self.classes.index(self.face_label)
-        self.arcface_path = config["arcface_engine"]
+        self.arcface_path = config["model"]["face_extraction"]["engine"]
         self.size = tuple(config.get("detector_size", [640, 640]))
         if len(self.size) != 2 or any(not isinstance(v, int) or v <= 0 for v in self.size):
             raise ValueError("detector_size must contain positive height and width")

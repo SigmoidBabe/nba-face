@@ -8,13 +8,14 @@ version = "0.1.0"
 description = "CUDA TensorRT face recognition runtime with PostgreSQL vector search"
 requires-python = ">=3.10"
 dependencies = ["cupy-cuda12x>=13,<14", "tensorrt>=8.6,<11", "psycopg[binary]>=3.1",
-                "numpy>=1.24", "opencv-python>=4.8, <=4.10.0.84"]
+                "numpy>=1.24, <=1.26.4", "opencv-python>=4.8, <=4.10.0.84"]
 
 [project.entry-points."cv_demo.runtimes"]
 "nba.face" = "nba_face.runtime:FaceRuntime"
 
 [project.entry-points."cv_demo.grpc_apis"]
 "face.registration" = "nba_face.grpc:FaceRegistrationAPI"
+"face.performance" = "nba_face.performance:FacePerformanceAPI"
 
 [tool.setuptools.packages.find]
 where = ["src"]
