@@ -31,6 +31,88 @@ For deployment from a separate Git repository, publish this directory as that
 repository's root and replace `package.entry_point` with your host's
 `package.repository` and pinned `package.revision` configuration.
 
+## Core event images and recordings
+
+The supplied registry enables `recording: true` and `image_save: true` on the
+`face.recognition` capability. These independent YAML boolean switches belong
+alongside `id` and `output_modes`, outside package `config`. Set either to
+`false` to disable that output and restart the host after editing the registry.
+Session requests and package results cannot override the loaded switches.
+
+The runtime returns events on their trigger frame, with one `{snapshot, events}`
+result per submitted session. Its `faces[].box` values are source-image xyxy
+coordinates; the core uses these snapshots to draw yellow face boxes and
+identity labels on saved full-frame JPEGs and video. Snapshots from all sessions
+on each camera frame contribute overlays, including sessions emitting no event.
+The runtime does not retain borrowed CUDA frames or buffer evidence; GPU work
+finishes before the host can reuse frame storage. Enrollment images saved by
+`face.registration` remain separate durable identity data.
+
+Every emitted event requests the enabled media outputs, including periodic
+events and empty periodic snapshots. Choose `output.interval` with this storage
+cost in mind. Continuous snapshots still return on every processed frame, even
+when no event is due. Do not add media paths, image arrays, video bytes, or host
+envelope fields to event `data`.
+
+Configure storage and limits in the host application configuration, for example:
+
+```yaml
+event_jpeg_quality: 50
+event_images:
+  directory: recordings/images
+event_recording:
+  enabled: true
+  directory: recordings/events
+  pre_frames: 5
+  post_frames: 5
+  max_clip_frames: 150
+  max_clip_bytes: 134217728
+  max_events_per_clip: 256
+  queue_size: 2
+  idle_timeout_seconds: 5
+  fallback_fps: 25
+```
+
+`event_recording.enabled` is the global video off switch. Recording uses shared
+GPU storage per camera and requires working CUDA/CuPy plus OpenCV `mp4v` encoding.
+The default clip includes five ingested frames before and after the trigger;
+these are ingestion frames, before inference FPS filtering. Provision GPU memory
+for camera resolutions and concurrent clips, and manage disk retention separately.
+
+Metadata snapshots are published immediately through `MetadataService.Subscribe`.
+`RuntimeControl.StartRuntime` inference events arrive after enabled media work
+finishes, retaining their trigger timestamps and event IDs. The host adds
+`image_path` and `video_path` to its envelope, outside `event_payload`. Paths are
+absolute server-side file references; remote clients need shared storage access.
+Events sharing a video remain distinct: identify events by `event_id`.
+
+Treat events as valid when a media path is null. Inspect `image_error` and
+`video_error` for failures, and `video_truncation_reason`, `video_pre_frames`,
+and `video_post_frames` for partial clips. Image-only events do not wait for
+video. No protobuf regeneration is required. See the
+[runtime update instructions](docs/runtime_package_update_instruction.md) for
+the complete envelope and recording resource behavior.
+
+## Model updates and worker lifecycle
+
+For OTA, send `.tar.gz` releases containing `manifest.json` and a self-contained
+ONNX model to the host's `ModelService.UpdateModelPath`. The host stops the
+managed GPU pipeline, builds TensorRT engines, updates registry paths, and
+creates fresh runtime and API instances. This package loads the generated paths
+from `config.model.face_detection.engine` and
+`config.model.face_extraction.engine`. Detector class labels are read from the
+`classes` array in `config.model.face_detection.manifest`, which OTA sets to the
+staged manifest path. If omitted, the path defaults to `manifest.json` beside
+the detector engine. See [model OTA](docs/model-ota.md).
+
+Registration API instances run independently in the supervised GPU worker.
+Closing an instance releases its database connection and model contexts.
+Keep PostgreSQL identities and `registration_image_dir` outside model release
+directories so they survive replacement. Session appearance state and periodic
+timers restart with new instances; the host restores enabled sessions from its
+database. Clients must keep runtime streams open through the nonterminal
+`PAUSED` state and handle startup states when inference resumes.
+
 ## Face registration API
 
 Reinstall this package after updating it so the host discovers its
@@ -215,9 +297,9 @@ is synchronized before buffers or execution context bindings can be reused.
   using padding value 114. `detector_size` is `[H,W]`. Output is raw detection-only
   YOLOv8 `[B,4+C,N]` (`detector_layout: BCN`) or `[B,N,4+C]` (`BNC`), containing
   pixel `cx,cy,w,h` followed by `C` class scores. Export without built-in NMS.
-  Class names are read from the `.txt` file beside the detector engine, using
-  the same filename stem and line-order class IDs as `packages/person-inference`.
-  For `/opt/models/face-yolov8.engine`, supply `/opt/models/face-yolov8.txt`.
+  Class names are read in array order from the detector manifest's `classes`
+  field. Set `config.model.face_detection.manifest` to its path, or supply
+  `manifest.json` beside the detector engine.
   The decoder picks each anchor's highest-scoring class, then keeps only the
   class named `face` (override with `face_label` in registry config). A box whose
   best class is another label is excluded even if its face score is high.
@@ -232,21 +314,24 @@ is synchronized before buffers or execution context bindings can be reused.
   embeddings are omitted. No landmark alignment or pose classification model is
   used. `pose` in output is the matched stored identity's `type`.
 
-For a detector trained with class IDs `0=person`, `1=face`, `2=helmet`, its `.txt`
-file must contain:
+For a detector trained with class IDs `0=person`, `1=face`, `2=helmet`, its
+`manifest.json` must include:
 
-```text
-person
-face
-helmet
+```json
+{
+  "model_type": "detection",
+  "classes": ["person", "face", "helmet"]
+}
 ```
 
-Class order must match training/export order. Blank lines within the class list,
-duplicate names, a missing face label, and output channel counts that disagree
-with the label file are rejected. Trailing empty lines are ignored. The default
+Class order must match training/export order. A missing or empty class array,
+non-string or blank names, duplicate names, a missing face label, and output
+channel counts that disagree with the manifest are rejected. Leading and trailing
+whitespace in names is stripped. The default
 `face_label: face` resolves class ID 1 in this example; no numeric class ID needs
-to be configured. Single-class models also require a `.txt` file containing
-their class name.
+to be configured. Single-class detectors also require a manifest containing
+their class name, such as `"classes": ["face"]`. Extraction models may use the
+empty class array shown in [the example manifest](docs/manifest.json).
 
 The explicit device-to-host download is a compact array of final embeddings and
 box/confidence/frame-index metadata. GPU selection/compaction can also synchronize

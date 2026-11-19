@@ -138,6 +138,9 @@ faces alone never trigger appearance events.
 
 ## Event payload and runtime integration
 
+For the host event envelope with a face recognition `event_payload`, see
+[Face recognition event payload](face_recognition.md).
+
 When emission is due, `events` contains exactly one object whose `data` is the
 entire current snapshot:
 

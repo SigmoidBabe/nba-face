@@ -11,6 +11,7 @@
     model:
       face_detection:
         engine: /opt/models/face-yolov8.engine
+        manifest: /opt/models/manifest.json
         operations_per_inference: 0
       face_extraction:
         engine: /opt/models/arcface.engine
@@ -26,7 +27,7 @@
     # device: 0
     # detector_size: [640, 640]
     # detector_layout: BCN
-    # face_label: face  # Class name from /opt/models/face-yolov8.txt.
+    # face_label: face  # Class name from the detector manifest's classes array.
     # batch_size: 8
     # score_threshold: 0.7
     # iou_threshold: 0.4
@@ -36,4 +37,6 @@
     # max_faces: 100
   capabilities:
     - id: face.recognition
+      recording: true
+      image_save: true
       output_modes: [periodic, event]

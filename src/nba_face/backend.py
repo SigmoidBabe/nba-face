@@ -1,4 +1,5 @@
 """GPU frame preprocessing, batched detection, NMS, crops and ArcFace."""
+import json
 import math
 from pathlib import Path
 
@@ -12,15 +13,18 @@ from .trt import TensorRTEngine
 class FaceBackend:
     def __init__(self, config):
         self.device = int(config.get("device", 0))
-        self.detector_path = config["model"]["face_detection"]["engine"]
-        # Match person-inference: class IDs follow line order in model.txt
-        # beside model.engine/model.trt. Ignore trailing empty lines only.
-        labels_path = Path(self.detector_path).with_suffix(".txt")
-        self.classes = [line.strip() for line in labels_path.read_text(encoding="utf-8").splitlines()]
-        while self.classes and not self.classes[-1]:
-            self.classes.pop()
-        if not self.classes or any(not name for name in self.classes):
-            raise ValueError(f"{labels_path} must contain one non-empty class name per line")
+        detector_config = config["model"]["face_detection"]
+        self.detector_path = detector_config["engine"]
+        # OTA supplies the staged manifest path; class IDs follow array order.
+        labels_path = Path(detector_config.get("manifest", Path(self.detector_path).with_name("manifest.json")))
+        manifest = json.loads(labels_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError(f"{labels_path} must contain a JSON object")
+        classes = manifest.get("classes")
+        if (not isinstance(classes, list) or not classes
+                or any(not isinstance(name, str) or not name.strip() for name in classes)):
+            raise ValueError(f"{labels_path} classes must be a non-empty array of non-empty class names")
+        self.classes = [name.strip() for name in classes]
         if len(set(self.classes)) != len(self.classes):
             raise ValueError(f"{labels_path} must contain unique class names")
         self.face_label = config.get("face_label", "face")
@@ -77,7 +81,7 @@ class FaceBackend:
         if prediction.ndim != 2 or prediction.shape[1] != expected:
             raise ValueError(
                 f"Detector must output raw YOLOv8 [B,{expected},N] or [B,N,{expected}] "
-                f"for {len(self.classes)} classes in its .txt file"
+                f"for {len(self.classes)} classes in its manifest.json"
             )
         prediction = prediction.astype(cp.float32, copy=False)
         prediction = prediction[cp.isfinite(prediction).all(1)]
