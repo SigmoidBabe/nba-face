@@ -109,7 +109,7 @@ class FaceBackend:
         """Return one face list per CUDA frame, batching both TRT models.
 
         Only final 512D embeddings and compact metadata are downloaded for
-        PostgreSQL search and JSON output. No image pixels leave GPU memory.
+        Zvec search and JSON output. No image pixels leave GPU memory.
         """
         if not frames:
             return []

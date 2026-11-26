@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from .backend import FaceBackend
+from ._database_service import DatabaseOutcomeUnknownError
 from .database import FaceSearch
 
 
@@ -79,6 +80,10 @@ class FaceRegistrationAPI:
                     created = True
                     output.write(jpeg.tobytes())
                 return self.database.register(employee_id, embedding, str(path))
+            except DatabaseOutcomeUnknownError:
+                # The insert may be durable even though its reply was lost.
+                # Preserve its image rather than leave a broken stored path.
+                raise
             except Exception:
                 if created:
                     path.unlink(missing_ok=True)

@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nba-face"
 version = "0.1.0"
-description = "CUDA TensorRT face recognition runtime with PostgreSQL vector search"
+description = "CUDA TensorRT face recognition runtime with Zvec vector search"
 requires-python = ">=3.10"
-dependencies = ["cupy-cuda12x>=13,<14", "tensorrt>=8.6,<11", "psycopg[binary]>=3.1",
+dependencies = ["cupy-cuda12x>=13,<14", "tensorrt>=8.6,<11", "zvec>=0.8.1,<0.9",
                 "numpy>=1.24, <=1.26.4", "opencv-python>=4.8, <=4.10.0.84"]
 
 [project.entry-points."cv_demo.runtimes"]

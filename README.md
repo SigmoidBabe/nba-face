@@ -106,8 +106,9 @@ staged manifest path. If omitted, the path defaults to `manifest.json` beside
 the detector engine. See [model OTA](docs/model-ota.md).
 
 Registration API instances run independently in the supervised GPU worker.
-Closing an instance releases its database connection and model contexts.
-Keep PostgreSQL identities and `registration_image_dir` outside model release
+Closing an instance releases its model contexts and database client socket. A
+separate local database owner keeps the collection open while clients use it.
+Keep the Zvec collection and `registration_image_dir` outside model release
 directories so they survive replacement. Session appearance state and periodic
 timers restart with new instances; the host restores enabled sessions from its
 database. Clients must keep runtime streams open through the nonterminal
@@ -136,23 +137,20 @@ Call `cv_demo.api.v1.PackageAPI/Invoke` with:
 
 Send raw base64 without a data URL prefix. `employee_id` must be a signed 64-bit
 integer or an integer string; arbitrary employee names are unsupported by the
-PostgreSQL `BIGINT` schema. Send large identifiers as strings to avoid protobuf
+Zvec `INT64` field. Send large identifiers as strings to avoid protobuf
 Struct number precision loss. The image must contain exactly one face passing
 the configured detector filters. `crop_type` is optional, ignores case and
 surrounding whitespace, and accepts `full`, `tight`, or `loose` (default).
-`full` embeds and saves the full image, `tight
-The API decodes the uploaded image on the CPU, uploads it for the existing
-TensorRT detector and ArcFace models, normalizes a 512D embedding, and inserts
-an identity in the configured PostgreSQL `publ` uses the detected box, and
+`full` embeds and saves the full image, `tight` uses the detected box, and
 `loose` expands the box by 25% on each side, clipped to the image bounds.
 
 The API decodes the uploaded image on the CPU, uploads it for the existing
 TensorRT detector and ArcFace models, normalizes a 512D embedding, and inserts
-an identity in the configured PostgreSQL `public.identity` table. The stored
+an identity in the configured Zvec collection. The stored
 pose/type is `front`; no pose classification is performed. Every call inserts
 a new identity, allowing multiple images per employee. Models are loaded lazily
 and independently from runtime inference. Calls share a lock to protect the API's
-models and database connection.
+models and database operations.
 
 Example response (the package object is returned directly):
 
@@ -171,7 +169,7 @@ Relative directories are resolved from the current working directory and remain
 relative in `image_url`. This is a host file reference, not an HTTP download URL. A failed database insert
 attempts to remove the newly saved image. No S3 upload is performed.
 
-Soft-delete an individual registration by its positive PostgreSQL identity ID:
+Soft-delete an individual registration by its positive identity ID:
 
 ```json
 {
@@ -181,9 +179,9 @@ Soft-delete an individual registration by its positive PostgreSQL identity ID:
 }
 ```
 
-The response is `{"identity_id":123,"deleted":true}` when an active row was
+The response is `{"identity_id":123,"deleted":true}` when an active document was
 deleted, or `{"identity_id":123,"deleted":false}` if it was absent or already
-deleted. This sets `deleted_at` and `updated_at`; it preserves the row and JPEG.
+deleted. This sets `deleted_at` and `updated_at`; it preserves the document and JPEG.
 Subsequent recognition queries exclude that identity. Other registrations for
 the same employee remain active. Deletion does not load GPU models.
 
@@ -335,9 +333,8 @@ empty class array shown in [the example manifest](docs/manifest.json).
 
 The explicit device-to-host download is a compact array of final embeddings and
 box/confidence/frame-index metadata. GPU selection/compaction can also synchronize
-small counts with the host. PostgreSQL is a CPU/network service and
-needs those vectors serialized for SQL; frame pixels, face crops and model
-input tensors never leave GPU memory. This pipeline therefore avoids GPU-to-CPU
+small counts with the host. Zvec searches embeddings on the CPU; frame pixels,
+face crops and model input tensors never leave GPU memory. This pipeline therefore avoids GPU-to-CPU
 image copies; it does not claim zero host transfers for database search.
 
 Existing registered embeddings must come from the same ArcFace model and
@@ -409,67 +406,58 @@ the legacy worker's area heuristic (60 cm at a frame-area ratio of 0.065).
 Events contain metadata only; image uploads, liveness and tracking are not
 implemented.
 
-## PostgreSQL face search
+## Zvec face search
 
-Uses the existing schema from `internal/repo/FaceRecognitionDB.py` and the worker
-under `internal/ai_runtime/face_recognition_worker`. The database must already
-have pgvector and `public.identity` with `id`, `embedding vector(512)`,
-`employee_id`, `image_url`, `type`, nullable `deleted_at`, and `updated_at`.
-No tables or indexes are created by this package. Registration inserts records and deletion updates
-their soft-delete timestamps through the API described above.
-
-Each inference chunk sends embeddings in one parameterized query using
-`unnest(... WITH ORDINALITY)` and a lateral nearest-neighbor lookup per vector:
-
-```sql
-SELECT i.id AS identity_id, i.employee_id, i.image_url, i.type AS pose,
-       1 - (i.embedding <=> query_embedding::vector) AS similarity
-FROM public.identity i
-WHERE i.deleted_at IS NULL AND i.embedding IS NOT NULL
-ORDER BY i.embedding <=> query_embedding::vector
-LIMIT 1;
-```
-
-This preserves cosine similarity and soft-deletion behavior from the legacy
-search. It can use the existing HNSW `vector_cosine_ops` index. Newly committed
-registrations are visible on subsequent queries without a gallery reload.
-
-Set the PostgreSQL connection URL directly in `registry.yaml`:
+Face identities are stored in a persistent local Zvec collection. Configure a
+writable collection path in `registry.yaml`:
 
 ```yaml
     db:
-      url: 'postgresql://USER:PASSWORD@HOST:5432/DATABASE'
+      path: /var/lib/cv-demo/nba-face/identity.zvec
 ```
 
-Replace the placeholders with your database connection details.
-`config.db.url` takes precedence over the environment variable. Alternatively,
-omit `url` and use `config.db.dsn_env`, which names an environment variable
-(default `NBA_FACE_DATABASE_URL`) containing the connection URL:
+`config.db.path` is required. The runtime creates the collection and indexes on
+first use; use a path that does not already contain other files. Relative paths
+resolve from the host working directory. Keep the directory on persistent local
+storage, outside model releases, and make its parent writable for the adjacent
+`.lock` file. Runtime and registration instances must use the same path.
 
-```bash
-export NBA_FACE_DATABASE_URL='postgresql://USER:PASSWORD@HOST:5432/DATABASE'
-```
+The schema stores a 512D FP32 embedding with a cosine HNSW index, employee ID
+(`INT64`), image path, pose/type, and millisecond update and deletion timestamps.
+Active documents have `deleted_at = 0`; recognition filters out deleted documents.
+Registration creates a random positive numeric identity ID within `2**53 - 1`
+so it survives protobuf Struct transport exactly. Multiple registrations for
+one employee remain supported.
 
-For a container or service, pass the variable into that container or service's
-environment and restart it. An export in a separate shell does not update an
-already-running host. A missing URL and unset or empty variable with no
-configured connection fields causes a startup `ValueError`.
+Each search batch queries the nearest active
+identity for each embedding in input order. Similarity is cosine similarity;
+higher is better and existing session thresholds still apply. An empty active
+gallery returns null matches. Writes are flushed before returning. Collection
+access goes through one automatically started local owner process per resolved
+database path and OS user. It keeps the Zvec handle open and serves all runtime
+and registration instances over persistent Unix sockets. Operations are
+serialized around that shared handle; a completed registration or deletion is
+visible to the next search from any worker without reopening the collection.
+The owner holds the adjacent `.lock` file for its lifetime, preventing a second
+cooperating owner from opening the collection. Use the same local filesystem
+path, OS user, and temporary directory for all workers. Socket files live in a
+private `nba-face-db-<uid>` directory under the system temporary directory. No
+network port or separately configured service is required.
 
-Alternatively, replace `config.db` with explicit connection fields:
+The owner closes the collection and exits after 30 seconds with no connected
+clients. Model replacement can reuse it while other clients remain connected.
+If the owner fails, the current operation reports an error; requests are never
+automatically replayed because a lost registration reply may already have
+committed. A subsequent operation reconnects and restarts the owner if needed.
+The registration image is retained when the write outcome is unknown, so a
+committed identity cannot lose its image because its reply was interrupted.
+Startup failures identify a log file alongside the socket. Restart all existing
+workers when adopting this implementation so they use the same ownership model.
+This is a local service, not a distributed database.
 
-```yaml
-    db:
-      name: YOUR_DATABASE
-      username: YOUR_USER
-      password: YOUR_PASSWORD
-      host: YOUR_DATABASE_HOST
-      port: 5432
-```
-
-Explicit fields override the corresponding values in the registry URL or
-environment DSN. Search uses a
-lazy persistent autocommit connection, a 10-second connection timeout and
-`db.statement_timeout_ms` (default 5000). Database failures propagate to the
-host's runtime failure handling, rather than reporting everyone as unknown.
-Closed or broken connections are reopened on the next invocation. Runtime close
-releases the connection and model contexts.
+Database failures propagate to the host rather than reporting unknown faces.
+The implementation follows the [Zvec Python collection API](https://zvec.org/api-reference/python/collection/).
+Reinstall the package to install the Zvec dependency, update the registry, and
+restart the host. PostgreSQL connection settings are no longer used. Existing
+PostgreSQL identities are not migrated automatically; re-enroll the gallery or
+import compatible embeddings separately before switching production traffic.

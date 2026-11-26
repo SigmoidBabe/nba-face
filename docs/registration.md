@@ -2,7 +2,7 @@
 
 The `face.registration` API enrolls faces and soft-deletes individual
 registrations through the host's `cv_demo.api.v1.PackageAPI/Invoke` endpoint.
-Recognition sessions use the registered embeddings for PostgreSQL cosine search.
+Recognition sessions use the registered embeddings for Zvec cosine search.
 
 ## Setup
 
@@ -23,7 +23,7 @@ registry. See [registry.yaml](../registry.yaml) for the complete example:
         engine: /opt/models/arcface.engine
     registration_image_dir: /var/lib/cv-demo/nba-face/images
     db:
-      url: 'postgresql://USER:PASSWORD@HOST:5432/DATABASE'
+      path: /var/lib/cv-demo/nba-face/identity.zvec
   capabilities:
     - id: face.recognition
       output_modes: [periodic, event]
@@ -36,9 +36,10 @@ with the same filename stem. The default face class name is `face`. See the
 [README](../README.md#gpu-pipeline-and-engine-contracts) for engine requirements.
 The image directory must be writable and persistent.
 
-The database must already provide pgvector and `public.identity` with `id`,
-`employee_id` (`BIGINT`), `embedding` (`vector(512)`), `image_url`, `type`,
-`deleted_at`, and `updated_at`. The package does not create tables or indexes.
+The package creates a local Zvec collection at `config.db.path` on first use,
+including a 512D cosine HNSW index and identity metadata. The collection path
+and its parent must be writable and persistent. Use the same path for recognition
+and registration. Existing PostgreSQL records are not imported automatically.
 Only one provider of `face.registration` should be enabled in the host. Reinstall
 the package after updates so the host discovers its API entry point.
 
@@ -81,7 +82,7 @@ both embedded by ArcFace and saved as a JPEG:
 Registration's loose crop uses a fixed 25% margin, independent of recognition's
 `config.crop_margin` (default 20%). No landmark alignment or pose classification
 is performed. The API normalizes a finite, nonzero 512-dimensional embedding
-and inserts a row with `type = 'front'`.
+and inserts a document with `type = 'front'`.
 
 Example package response:
 
@@ -131,7 +132,7 @@ active registration returns:
 
 An absent or already deleted registration returns the same ID with
 `"deleted": false`. Deletion sets `deleted_at` and `updated_at`, preserving the
-row and JPEG. Subsequent recognition queries exclude the row; other entries for
+document and JPEG. Subsequent recognition queries exclude the document; other entries for
 the same employee remain active. Deletion does not load GPU models.
 
 ## Errors

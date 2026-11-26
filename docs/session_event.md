@@ -49,7 +49,7 @@ open streams or schedule inference itself.
 ## Recognition and snapshots
 
 For each detected face with a valid embedding, the runtime searches active,
-non-null PostgreSQL embeddings for the nearest cosine match. Higher similarity
+active Zvec embeddings for the nearest cosine match. Higher similarity
 is better. Each session applies its own threshold to the shared search result.
 A similarity equal to the threshold is accepted.
 
@@ -92,11 +92,11 @@ Every processed session returns a snapshot, even when no event is due:
 | `face_area` | Detected box area in square pixels, computed before box coordinates are converted to integers. |
 | `face_area_ratio` | Detected box area divided by source-frame area. |
 | `estimated_distance_cm` | Area heuristic: `60 * sqrt(0.065 / face_area_ratio)`, or `null` for a nonpositive ratio. This is not a calibrated depth measurement. |
-| `identity_id` | Matched registration row ID, or `null`. |
+| `identity_id` | Matched registration document ID, or `null`. |
 | `employee_id` | Matched employee ID, or `null`. Multiple registrations can share an employee. |
 | `image_url` | Matched enrollment image reference, or `null`; package registrations store a filesystem path. |
 | `similarity` | Nearest cosine similarity, or `null` when no match exists. |
-| `pose` | Matched row's stored `type`, or `null`. Package registration writes `front`; inference does not estimate pose. |
+| `pose` | Matched document's stored `type`, or `null`. Package registration writes `front`; inference does not estimate pose. |
 
 An empty scene returns `{"faces_count": 0, "faces": []}` as its snapshot.
 
