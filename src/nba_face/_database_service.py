@@ -2,6 +2,7 @@
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import select
@@ -46,15 +47,24 @@ def _receive(stream):
 
 
 class DatabaseClient:
-    def __init__(self, path):
+    def __init__(self, path, timeout_seconds=5):
+        if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
+                or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+            raise ValueError("config.db.timeout_seconds must be a finite positive number")
         self.path = path
+        self.timeout_seconds = float(timeout_seconds)
         self._pid = os.getpid()
         self._lock = threading.Lock()
         self._socket = self._stream = None
 
-    def _disconnect(self):
+    def _disconnect(self, *, shutdown=True):
         stream, connection = self._stream, self._socket
         self._stream = self._socket = None
+        if connection is not None and shutdown:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
         for resource in (stream, connection):
             if resource is not None:
                 try:
@@ -66,6 +76,7 @@ class DatabaseClient:
 
     def _connect(self, endpoint):
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(self.timeout_seconds)
         try:
             connection.connect(str(endpoint))
         except OSError:
@@ -78,9 +89,17 @@ class DatabaseClient:
         if self._stream is not None:
             return
         endpoint = _endpoint(self.path)
+        deadline = time.monotonic() + STARTUP_SECONDS
         # Prevent multiple workers starting owners at the same time.
         with endpoint.with_suffix(".start.lock").open("a+b") as startup_lock:
-            fcntl.flock(startup_lock, fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(startup_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Database startup lock timed out: {endpoint}")
+                    time.sleep(0.02)
             try:
                 self._connect(endpoint)
                 return
@@ -93,7 +112,6 @@ class DatabaseClient:
                     stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                     start_new_session=True, close_fds=True,
                 )
-            deadline = time.monotonic() + STARTUP_SECONDS
             while True:
                 if process.poll() is not None:
                     raise RuntimeError(f"Database service failed to start; see {log_path}")
@@ -113,12 +131,15 @@ class DatabaseClient:
         if self._pid != os.getpid():
             # Do not reuse a parent's stream or a possibly locked thread mutex.
             self._lock = threading.Lock()
-            self._disconnect()
+            # shutdown() would affect the parent's copy of this same socket.
+            self._disconnect(shutdown=False)
             self._pid = os.getpid()
 
     def call(self, method, args):
         self._after_fork()
-        with self._lock:
+        if not self._lock.acquire(timeout=self.timeout_seconds):
+            raise TimeoutError(f"Database client busy before {method}; request was not sent")
+        try:
             self._ensure_connected()
             try:
                 _send(self._stream, {"method": method, "args": args})
@@ -128,13 +149,16 @@ class DatabaseClient:
                 # A write might already have committed. Retrying could duplicate
                 # registration, so leave retry decisions to the caller.
                 raise DatabaseOutcomeUnknownError(
-                    "Database service connection lost; operation outcome may be unknown"
+                    f"Database service {method} timed out or connection lost "
+                    f"(socket timeout {self.timeout_seconds:g}s); operation outcome may be unknown"
                 ) from exc
             if "error" in response:
                 error = response["error"]
                 exception = ValueError if error["type"] == "ValueError" else RuntimeError
                 raise exception(error["message"])
             return response["result"]
+        finally:
+            self._lock.release()
 
     def close(self):
         self._after_fork()

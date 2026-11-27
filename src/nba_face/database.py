@@ -131,7 +131,7 @@ class FaceSearch:
 
         # Keep path validation eager, but start the service only on first use.
         self.path = _FaceStore(config).path
-        self._client = DatabaseClient(self.path)
+        self._client = DatabaseClient(self.path, config.get("timeout_seconds", 5))
 
     def register(self, employee_id, embedding, image_url):
         return self._client.call("register", [employee_id, _FaceStore._vector(embedding), image_url])

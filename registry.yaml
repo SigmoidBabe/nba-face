@@ -7,6 +7,8 @@
     - face.registration
     - face.performance
   config:
+    # Emit inference stage logs to worker stderr; set false after diagnosis.
+    debug: true
     # Required deployment settings (no defaults).
     model:
       face_detection:
@@ -19,6 +21,8 @@
     registration_image_dir: /var/lib/cv-demo/nba-face/images
     db:
       path: /var/lib/cv-demo/nba-face/identity.zvec
+      # Maximum wait for database socket I/O before reporting a worker error.
+      # timeout_seconds: 5
     # Required for calculate_tops: set actual operations per single model item.
     # Detection processes one frame; ArcFace extracts one face per frame.
     # No operation counts are inferred from the engine filenames.

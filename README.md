@@ -456,6 +456,25 @@ workers when adopting this implementation so they use the same ownership model.
 This is a local service, not a distributed database.
 
 Database failures propagate to the host rather than reporting unknown faces.
+Database socket I/O times out after `config.db.timeout_seconds` (default 5
+seconds), disconnects the client, and reports the operation name. A stalled
+owner therefore cannot hold the recognition loop indefinitely while it waits
+for a search reply. Waiting for the client mutex uses the same timeout; owner
+startup and startup-lock contention have a separate 60-second limit. Timed-out
+requests are never replayed automatically; a registration may already have
+committed, so its image is retained when the reply is lost.
+
+For a stalled runtime, set `config.debug: true` in this runtime's registry entry
+and restart the worker. The supplied registry enables it for diagnosis; omitted
+or `false` leaves logging under the host's normal configuration. Debug mode
+writes timestamped `nba_face.backend` stage messages directly to worker stderr,
+even when the host filters DEBUG logs. No Core changes are required. Set it to
+`false` after diagnosis to avoid per-frame debug output.
+The last stage message distinguishes engine loading, CUDA frame wrapping,
+preprocessing, detection, crop preparation, ArcFace, embedding download,
+database search, and final GPU synchronization. GPU stages are asynchronous;
+a synchronization wait can reflect earlier queued work. First-frame engine
+loading and CUDA kernel compilation can take longer than subsequent frames.
 The implementation follows the [Zvec Python collection API](https://zvec.org/api-reference/python/collection/).
 Reinstall the package to install the Zvec dependency, update the registry, and
 restart the host. PostgreSQL connection settings are no longer used. Existing

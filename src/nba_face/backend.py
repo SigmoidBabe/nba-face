@@ -6,12 +6,14 @@ from pathlib import Path
 import cupy as cp
 
 from .database import FaceSearch
+from ._logging import configured_logger
 from .gpu import face_crops, letterbox, nms
 from .trt import TensorRTEngine
 
 
 class FaceBackend:
     def __init__(self, config):
+        self.logger = configured_logger(__name__, config)
         self.device = int(config.get("device", 0))
         detector_config = config["model"]["face_detection"]
         self.detector_path = detector_config["engine"]
@@ -55,8 +57,10 @@ class FaceBackend:
     def _load(self):
         if self.detector is None:
             # Initialize on the CUDA primary context used by ingestion.
+            self.logger.debug("Loading face detector: %s", self.detector_path)
             self.detector = TensorRTEngine(self.detector_path, self.device)
         if self.arcface is None:
+            self.logger.debug("Loading ArcFace: %s", self.arcface_path)
             self.arcface = TensorRTEngine(self.arcface_path, self.device)
 
     def _frame_array(self, image):
@@ -119,15 +123,21 @@ class FaceBackend:
             finally:
                 # Also finish kernels on errors, before borrowed ingestion frame
                 # storage can be recycled by the caller.
+                self.logger.debug("Synchronizing face recognition GPU work")
                 cp.cuda.get_current_stream().synchronize()
+                self.logger.debug("Face recognition GPU work complete")
 
     def _infer_batch(self, frames):
         results = [[] for _ in frames]
         self._load()
         for start in range(0, len(frames), self.batch_size):
+            self.logger.debug("Wrapping CUDA face frames at batch offset %d", start)
             images = [self._frame_array(frame) for frame in frames[start:start + self.batch_size]]
+            self.logger.debug("Preprocessing %d face frames", len(images))
             prepared = [letterbox(image, self.size) for image in images]
+            self.logger.debug("Running face detector")
             predictions = self.detector.infer_batch(cp.concatenate([item[0] for item in prepared]))
+            self.logger.debug("Filtering face detections and preparing crops")
             crops, metadata = [], []
             for index, (image, prediction, (_, transform)) in enumerate(zip(images, predictions, prepared)):
                 boxes, scores = self._detections(prediction, image, transform)
@@ -144,6 +154,7 @@ class FaceBackend:
                                                 boxes, scores[:, None]), axis=1))
             if not crops:
                 continue
+            self.logger.debug("Running ArcFace for %d faces", sum(len(crop) for crop in crops))
             raw = self.arcface.infer_batch(cp.concatenate(crops))
             embeddings = raw.astype(cp.float32, copy=False).reshape(len(raw), -1)
             if embeddings.shape[1] != 512:
@@ -154,8 +165,11 @@ class FaceBackend:
             # Only search vectors and result metadata are explicitly downloaded.
             # GPU compaction may synchronize counts, never frame/crop pixels.
             packed = cp.concatenate((cp.concatenate(metadata), normalized), axis=1)[valid]
+            self.logger.debug("Downloading face embeddings and metadata")
             rows = cp.asnumpy(packed).tolist()
+            self.logger.debug("Searching face database for %d embeddings", len(rows))
             matches = self.search.search_batch([row[6:] for row in rows])
+            self.logger.debug("Face database search complete")
             for row, match in zip(rows, matches):
                 frame_index = int(row[0])
                 box = row[1:5]
